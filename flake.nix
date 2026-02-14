@@ -2,7 +2,7 @@
   description = "dev-shell that wraps current shell";
 
   outputs = { self }: 
-    let
+    mkShell = { pkgs, deps }: let
       text = /* bash */ ''
         #!/usr/bin/env bash
 
@@ -26,15 +26,11 @@
         # start shell
         exec ''$shell
       '';
-
-    in {
-      mkShell = { pkgs, deps }:
-        pkgs.writeShellApplication {
-          name = "dev-shell";
-          runtimeInputs = [ pkgs.bash ];
-          inherit text;
-        };
-  };
+    in pkgs.writeShellApplication {
+      name = "dev-shell";
+      runtimeInputs = [ pkgs.bash ];
+      inherit text;
+    };
 }
 
 
