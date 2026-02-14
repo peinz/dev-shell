@@ -1,7 +1,7 @@
 {
   description = "dev-shell that wraps current shell";
 
-  outputs = { self }: 
+  outputs = { self }: {
     mkShell = { pkgs, deps }: let
       text = /* bash */ ''
         #!/usr/bin/env bash
@@ -31,6 +31,7 @@
       runtimeInputs = [ pkgs.bash ];
       inherit text;
     };
+  };
 }
 
 
