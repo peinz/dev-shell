@@ -3,6 +3,12 @@
 
   outputs = { self }: {
     mkShell = { pkgs, deps }: let
+      pkgConfigPath = pkgs.lib.concatStringsSep ":" (
+        pkgs.lib.concatMap (p: [
+          "${p}/lib/pkgconfig"
+          "${p}/share/pkgconfig"
+        ]) deps);
+
       text = /* bash */ ''
         #!/usr/bin/env bash
 
@@ -22,6 +28,7 @@
         # setup env
         export PATH="${pkgs.lib.makeBinPath deps}:''$PATH"
         export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath deps}:''${LD_LIBRARY_PATH:-}"
+        export PKG_CONFIG_PATH="${pkgConfigPath}:''${PKG_CONFIG_PATH:-}"
       
         # start shell
         exec ''$shell
