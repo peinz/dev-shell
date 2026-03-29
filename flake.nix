@@ -2,12 +2,16 @@
   description = "dev-shell that wraps current shell";
 
   outputs = { self }: {
-    mkShell = { pkgs, deps }: let
+    mkShell = { pkgs, deps, env ? {} }: let
       pkgConfigPath = pkgs.lib.concatStringsSep ":" (
         pkgs.lib.concatMap (p: [
           "${p}/lib/pkgconfig"
           "${p}/share/pkgconfig"
         ]) deps);
+
+      extraEnvExports = pkgs.lib.concatStringsSep "\n" (
+        pkgs.lib.mapAttrsToList (name: value: "export ${name}=\"${value}\"") env
+      );
 
       text = /* bash */ ''
         #!/usr/bin/env bash
@@ -29,7 +33,10 @@
         export PATH="${pkgs.lib.makeBinPath deps}:''$PATH"
         export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath deps}:''${LD_LIBRARY_PATH:-}"
         export PKG_CONFIG_PATH="${pkgConfigPath}:''${PKG_CONFIG_PATH:-}"
-      
+
+        # custom env variables
+        ${extraEnvExports}
+
         # start shell
         exec ''$shell
       '';
