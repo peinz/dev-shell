@@ -374,7 +374,7 @@ fn void generate_devshell_flake(Path project_root, DevShellConfig config) {
     
     Path gitignore_path = dev_shell_dir.tappend("/.gitignore")!!;
     File gf = file::open(gitignore_path.str_view(), "w")!!;
-    (void)gf.write("result\n")!!;
+    (void)gf.write("*\n")!!;
     (void)gf.flush()!!;
     (void)gf.close()!!;
 }
