@@ -426,31 +426,15 @@ fn void main() {
             
             if (needs_regeneration) {
                 generate_devshell_flake(project_root, config);
-                
-                String git_add_cmd = "git -C ";
-                DString add_cmd = dstring::temp();
-                add_cmd.append(git_add_cmd);
-                add_cmd.append(project_root.str_view());
-                add_cmd.append(" add .dev-shell");
-                system((ZString)add_cmd.str_view());
-                
                 (void)path::chdir(ds_dir)!!;
-                
-                String git_add_project_cmd = "git -C ";
-                DString add_project_cmd = dstring::temp();
-                add_project_cmd.append(git_add_project_cmd);
-                add_project_cmd.append(project_root.str_view());
-                add_project_cmd.append(" add .");
-                system((ZString)add_project_cmd.str_view());
-                
                 if (needs_rebuild) {
-                    system("nix build .#dev-shell");
+                    system("nix build path:.#dev-shell");
                 }
             } else {
                 Path result_path = ds_dir.tappend("/result/bin/dev-shell")!!;
                 if (!path::exists(result_path)) {
                     (void)path::chdir(ds_dir)!!;
-                    system("nix build .#dev-shell");
+                    system("nix build path:.#dev-shell");
                 }
             }
             
