@@ -29,6 +29,12 @@
           else export NIX_DEVSHELL_ENV=dev-shell
         fi
 
+        # env root
+        if [ -n "''${2:-}" ];
+          then export NIX_DEVSHELL_ROOT=''$2
+          else export NIX_DEVSHELL_ROOT=/
+        fi
+
         # setup env
         export PATH="${pkgs.lib.makeBinPath deps}:''$PATH"
         export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath deps}:''${LD_LIBRARY_PATH:-}"

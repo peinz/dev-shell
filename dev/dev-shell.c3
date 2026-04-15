@@ -5,6 +5,7 @@ import std::io::path;
 import std::io::file;
 import std::os;
 import std::time::datetime;
+import std::collections::list;
 import libc;
 
 extern fn CInt access(ZString path, CInt mode);
@@ -32,6 +33,47 @@ fn usz get_file_mtime(Path path) {
         return (usz)st.st_mtime;
     }
     return 0;
+}
+
+fn bool  is_project_folder(Path path) {
+  Path flake_path = path.tappend("/flake.nix")!!;
+  if (path::exists(flake_path)) return true;
+
+  Path git_path = path.tappend("/.git")!!;
+  if (path::exists(git_path)) return true;
+
+  Path project_json_path = path.tappend("/project.json")!!;
+  if (path::exists(project_json_path)) return true;
+
+  Path package_json_path = path.tappend("/package.json")!!;
+  if (path::exists(package_json_path)) return true;
+
+  Path pupspec_yaml_path = path.tappend("/pupspec.yaml")!!;
+  if (path::exists(pupspec_yaml_path)) return true;
+
+  return false;
+}
+
+fn String get_path_project_string(Path path) {
+  List{String} projects;
+  while (true) {
+    Path? parent = path.parent();
+    if (catch parent) break;
+
+    if (is_project_folder(path)) {
+      projects.push_front(path.basename());
+    }
+
+    path = parent;
+  }
+
+  String result = "";
+  foreach (project : projects) {
+    if (result != "") result = result.tconcat("/");
+    result = result.tconcat(project);
+  }
+
+  return result;
 }
 
 fn void find_flake_nix(Path* out_path, bool* found) {
@@ -448,7 +490,13 @@ fn void main() {
             ZString exec_path_z = (ZString)exec_path.str_view();
             ZString dir_name_z = (ZString)dir_name;
             
-            ZString[] args = { exec_path_z, dir_name_z, null };
+            String project_path = get_path_project_string(project_root);
+            ZString[] args = {
+              exec_path_z,
+              project_path.zstr_copy(tmem),
+              project_root.str_view().zstr_copy(tmem),
+              null,
+            };
             
             execvp(exec_path_z, args);
             
