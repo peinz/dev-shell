@@ -1,0 +1,21 @@
+// See resources/examples/project_all_settings.json and 'c3c --list-project-properties' to see more properties.
+{
+  "langrev": "1",
+  "warnings": [ "no-unused" ],
+  "dependency-search-paths": [ ],
+  "dependencies": [ ],
+  "version": "0.1.0",
+  "sources": [ "dev-shell.c3" ], // [ "src/**" ],
+  "build-dir": "build",
+  "output": "build",
+  "targets": {
+    "dev-shell": {
+      "type": "executable"
+    },
+    "test": {
+      "type": "executable"
+    }
+  },
+  "cpu": "generic",
+  "opt": "O0"
+}

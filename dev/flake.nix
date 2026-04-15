@@ -19,8 +19,24 @@
           cmake
           c3c
         ];
+
+        dev-shell-bin = pkgs.stdenv.mkDerivation {
+          pname = "dev-shell-bin";
+          version = "0.1.0";
+          src = self;
+          nativeBuildInputs = [ pkgs.c3c ];
+          buildPhase = ''
+            c3c build
+          '';
+          installPhase = ''
+            mkdir -p $out/bin
+            cp build/dev-shell $out/bin/dev-shell
+            chmod +x $out/bin/dev-shell
+          '';
+        };
       in
       {
+        packages.default = dev-shell-bin;
         devShells.default = pkgs.mkShell {
           buildInputs = deps;
           shellHook = '''';
