@@ -1,0 +1,25 @@
+{
+    "langrev": "1",
+    "sources": [
+      "src/**",
+      "test/**"
+    ],
+    "targets": {
+        "nix_parser": {
+            "type": "static-lib",
+            "link-args": [
+                "lib/tree-sitter/libtree-sitter.a",
+                "lib/tree-sitter-nix/src/parser.o",
+                "lib/tree-sitter-nix/src/scanner.o"
+            ]
+        },
+        "test": {
+            "type": "executable",
+            "link-args": [
+                "lib/tree-sitter/libtree-sitter.a",
+                "lib/tree-sitter-nix/src/parser.o",
+                "lib/tree-sitter-nix/src/scanner.o"
+            ]
+        }
+    }
+}
