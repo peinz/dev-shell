@@ -22,7 +22,7 @@
 
         dev-shell-bin = pkgs.stdenv.mkDerivation {
           pname = "dev-shell-bin";
-          version = "0.1.0";
+          version = "0.2.0";
           src = self;
           nativeBuildInputs = [ pkgs.c3c ];
           buildPhase = ''

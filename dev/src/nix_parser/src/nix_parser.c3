@@ -41,6 +41,7 @@ enum ExpressionType : int {
   BINARY,
   INTEGER,
   STRING,
+  FLOAT,
   VARIABLE,
   SELECT,
   LIST,
@@ -52,6 +53,11 @@ enum ExpressionType : int {
   FORMAL,
   FORMALS,
   PAREN,
+  IF,
+  BOOLEAN,
+  NULL_LITERAL,
+  PATH,
+  UNARY,
 }
 
 union Expression {
@@ -72,6 +78,12 @@ union Expression {
   FormalExpression as_formal_expression;
   FormalsExpression as_formals_expression;
   ParenExpression as_paren_expression;
+  FloatExpression as_float_expression;
+  IfExpression as_if_expression;
+  BooleanExpression as_boolean_expression;
+  NullExpression as_null_expression;
+  PathExpression as_path_expression;
+  UnaryExpression as_unary_expression;
 }
 
 struct BaseExpression {
@@ -107,6 +119,7 @@ struct IntegerExpression {
 struct StringExpression {
   ExpressionType type;
   String value;
+  bool is_indented;
 }
 
 struct VariableExpression {
@@ -172,6 +185,38 @@ struct FormalsExpression {
   List{FormalExpression*} formals;
 }
 
+struct FloatExpression {
+  ExpressionType type;
+  String value;
+}
+
+struct IfExpression {
+  ExpressionType type;
+  Expression* condition;
+  Expression* consequence;
+  Expression* alternative;
+}
+
+struct BooleanExpression {
+  ExpressionType type;
+  bool value;
+}
+
+struct NullExpression {
+  ExpressionType type;
+}
+
+struct PathExpression {
+  ExpressionType type;
+  String value;
+}
+
+struct UnaryExpression {
+  ExpressionType type;
+  String operator;
+  Expression* operand;
+}
+
 faultdef PARSE_ERROR;
 
 // [translate tree-sitter nodes to NixAst]
@@ -204,6 +249,18 @@ fn Expression*? tr_expression(TsNode node, String* source) {
   if (node_type == "formals") return (Expression*)tr_formals_expression(node, source);
   if (node_type == "formal") return (Expression*)tr_formal_expression(node, source);
   if (node_type == "parenthesized_expression") return (Expression*)tr_paren_expression(node, source);
+  if (node_type == "indented_string_expression") return (Expression*)tr_indented_string_expression(node, source);
+  if (node_type == "float_expression") return (Expression*)tr_float_expression(node, source);
+  if (node_type == "if_expression") return (Expression*)tr_if_expression(node, source);
+  if (node_type == "true") return (Expression*)tr_boolean_expression(node, source, true);
+  if (node_type == "false") return (Expression*)tr_boolean_expression(node, source, false);
+  if (node_type == "null") return (Expression*)tr_null_expression(node, source);
+  if (node_type == "path_expression") return (Expression*)tr_path_expression(node, source);
+  if (node_type == "spath_expression") return (Expression*)tr_path_expression(node, source);
+  if (node_type == "uri_expression") return (Expression*)tr_path_expression(node, source);
+  if (node_type == "unary_expression") return (Expression*)tr_unary_expression(node, source);
+  if (node_type == "comment") return null; // skip comments silently
+  // Unknown node types are a parse error
   return PARSE_ERROR~;
 }
 
@@ -450,10 +507,30 @@ fn IntegerExpression* tr_integer_expression(TsNode node, String* source) {
 }
 
 fn StringExpression* tr_string_expression(TsNode node, String* source) {
-  StringExpression* expr = mem::tnew(StringExpression, { .type = STRING });
+  StringExpression* expr = mem::tnew(StringExpression, { .type = STRING, .is_indented = false });
   
   // Get the string content (skip the quotes)
   // The string_expression contains: ", string_fragment(s), "
+  DString value_str = dstring::new(tmem, "");
+  int child_count = ts::node_named_child_count(node);
+  for (int i = 0; i < child_count; i++) {
+    TsNode child = ts::node_named_child(node, i);
+    ZString child_type = ts::node_type(child);
+    if (child_type == "string_fragment") {
+      value_str.append_string(ts::node_get_text(child, source));
+    } else if (child_type == "interpolation") {
+      // For interpolation ${...}, we'll include a placeholder
+      value_str.append_string("${...}");
+    }
+  }
+  expr.value = value_str.str_view();
+  return expr;
+}
+
+fn StringExpression* tr_indented_string_expression(TsNode node, String* source) {
+  StringExpression* expr = mem::tnew(StringExpression, { .type = STRING, .is_indented = true });
+  
+  // For indented strings, extract text fragments between '' markers
   DString value_str = dstring::new(tmem, "");
   int child_count = ts::node_named_child_count(node);
   for (int i = 0; i < child_count; i++) {
@@ -733,6 +810,77 @@ fn ParenExpression* tr_paren_expression(TsNode node, String* source) {
   return expr;
 }
 
+fn FloatExpression* tr_float_expression(TsNode node, String* source) {
+  FloatExpression* expr = mem::tnew(FloatExpression, { .type = FLOAT });
+  expr.value = ts::node_get_text(node, source);
+  return expr;
+}
+
+fn IfExpression* tr_if_expression(TsNode node, String* source) {
+  IfExpression* expr = mem::tnew(IfExpression, { .type = IF });
+
+  TsNode condition = ts::node_child_by_field_name(node, "condition");
+  if (!ts::node_is_null(condition)) {
+    expr.condition = tr_expression(condition, source)!!;
+  }
+
+  TsNode consequence = ts::node_child_by_field_name(node, "consequence");
+  if (!ts::node_is_null(consequence)) {
+    expr.consequence = tr_expression(consequence, source)!!;
+  }
+
+  TsNode alternative = ts::node_child_by_field_name(node, "alternative");
+  if (!ts::node_is_null(alternative)) {
+    expr.alternative = tr_expression(alternative, source)!!;
+  }
+
+  return expr;
+}
+
+fn BooleanExpression* tr_boolean_expression(TsNode node, String* source, bool value) {
+  BooleanExpression* expr = mem::tnew(BooleanExpression, { .type = BOOLEAN, .value = value });
+  return expr;
+}
+
+fn NullExpression* tr_null_expression(TsNode node, String* source) {
+  NullExpression* expr = mem::tnew(NullExpression, { .type = NULL_LITERAL });
+  return expr;
+}
+
+fn PathExpression* tr_path_expression(TsNode node, String* source) {
+  PathExpression* expr = mem::tnew(PathExpression, { .type = PATH });
+  expr.value = ts::node_get_text(node, source);
+  return expr;
+}
+
+fn UnaryExpression* tr_unary_expression(TsNode node, String* source) {
+  UnaryExpression* expr = mem::tnew(UnaryExpression, { .type = UNARY });
+
+  TsNode operator = ts::node_child_by_field_name(node, "operator");
+  if (!ts::node_is_null(operator)) {
+    expr.operator = ts::node_get_text(operator, source);
+    expr.operand = tr_expression(ts::node_child_by_field_name(node, "argument"), source)!!;
+  } else {
+    // Fallback: read the whole text and derive operator from first char
+    String text = ts::node_get_text(node, source);
+    if (text.len > 0) {
+      if (text[0] == '!') {
+        expr.operator = "!";
+      } else if (text[0] == '-') {
+        expr.operator = "-";
+      } else {
+        expr.operator = "-";
+      }
+    }
+    TsNode operand = ts::node_child_by_field_name(node, "argument");
+    if (!ts::node_is_null(operand)) {
+      expr.operand = tr_expression(operand, source)!!;
+    }
+  }
+
+  return expr;
+}
+
 
 // [serialization tree]
 fn void _serialize_tree(Expression* expr, DString* out, int depth = 0) {
@@ -768,11 +916,16 @@ fn void _serialize_tree(Expression* expr, DString* out, int depth = 0) {
       _serialize_tree(expr.as_binary_expression.left, out, depth + 1);
       _serialize_tree(expr.as_binary_expression.right, out, depth + 1);
     case INTEGER:
-      String txt = string::format(tmem, "int(%s)\n", expr.as_integer_expression.value);
-      out.append_string(txt);
+      String int_txt = string::format(tmem, "int(%s)\n", expr.as_integer_expression.value);
+      out.append_string(int_txt);
     case STRING:
-      String str_txt = string::format(tmem, "string(%s)\n", expr.as_string_expression.value);
-      out.append_string(str_txt);
+      if (expr.as_string_expression.is_indented) {
+        String str_txt = string::format(tmem, "indented_string(%s)\n", expr.as_string_expression.value);
+        out.append_string(str_txt);
+      } else {
+        String str_txt = string::format(tmem, "string(%s)\n", expr.as_string_expression.value);
+        out.append_string(str_txt);
+      }
     case VARIABLE:
       String var_txt = string::format(tmem, "var(%s)\n", expr.as_variable_expression.name);
       out.append_string(var_txt);
@@ -839,6 +992,34 @@ fn void _serialize_tree(Expression* expr, DString* out, int depth = 0) {
     case PAREN:
       out.append_string("paren:\n");
       _serialize_tree(expr.as_paren_expression.expression, out, depth + 1);
+    case FLOAT:
+      String float_txt = string::format(tmem, "float(%s)\n", expr.as_float_expression.value);
+      out.append_string(float_txt);
+    case IF:
+      out.append_string("if:\n");
+      _serialize_tree(expr.as_if_expression.condition, out, depth + 1);
+      for (int i = 0; i < depth + 1; i++) {
+        out.append_string(" ");
+      }
+      out.append_string("then:\n");
+      _serialize_tree(expr.as_if_expression.consequence, out, depth + 1);
+      for (int i = 0; i < depth + 1; i++) {
+        out.append_string(" ");
+      }
+      out.append_string("else:\n");
+      _serialize_tree(expr.as_if_expression.alternative, out, depth + 1);
+    case BOOLEAN:
+      String bool_txt = string::format(tmem, "bool(%s)\n", expr.as_boolean_expression.value ? "true" : "false");
+      out.append_string(bool_txt);
+    case NULL_LITERAL:
+      out.append_string("null\n");
+    case PATH:
+      String path_txt = string::format(tmem, "path(%s)\n", expr.as_path_expression.value);
+      out.append_string(path_txt);
+    case UNARY:
+      String unary_txt = string::format(tmem, "unary(%s):\n", expr.as_unary_expression.operator);
+      out.append_string(unary_txt);
+      _serialize_tree(expr.as_unary_expression.operand, out, depth + 1);
   }
 }
 
@@ -907,9 +1088,15 @@ fn void _serialize_code(Expression* expr, DString* out, int depth = 0) {
     case INTEGER:
       out.append_string(expr.as_integer_expression.value);
     case STRING:
-      out.append_char('"');
-      out.append_string(expr.as_string_expression.value);
-      out.append_char('"');
+      if (expr.as_string_expression.is_indented) {
+        out.append_string("''");
+        out.append_string(expr.as_string_expression.value);
+        out.append_string("''");
+      } else {
+        out.append_char('"');
+        out.append_string(expr.as_string_expression.value);
+        out.append_char('"');
+      }
     case VARIABLE:
       out.append_string(expr.as_variable_expression.name);
     case SELECT:
@@ -1004,6 +1191,24 @@ fn void _serialize_code(Expression* expr, DString* out, int depth = 0) {
       out.append_char('(');
       _serialize_code(expr.as_paren_expression.expression, out, depth);
       out.append_char(')');
+    case FLOAT:
+      out.append_string(expr.as_float_expression.value);
+    case IF:
+      out.append_string("if ");
+      _serialize_code(expr.as_if_expression.condition, out, depth);
+      out.append_string(" then ");
+      _serialize_code(expr.as_if_expression.consequence, out, depth);
+      out.append_string(" else ");
+      _serialize_code(expr.as_if_expression.alternative, out, depth);
+    case BOOLEAN:
+      out.append_string(expr.as_boolean_expression.value ? "true" : "false");
+    case NULL_LITERAL:
+      out.append_string("null");
+    case PATH:
+      out.append_string(expr.as_path_expression.value);
+    case UNARY:
+      out.append_string(expr.as_unary_expression.operator);
+      _serialize_code(expr.as_unary_expression.operand, out, depth);
   }
 }
 
@@ -1011,6 +1216,237 @@ fn String serialize_code(Expression* expr) {
   DString out = dstring::new(tmem, "");
   _serialize_code(expr, &out);
   return out.str_view();
+}
+
+// [find binding value in AST]
+
+fn Expression* find_binding_value(Expression* expr, String name) {
+    if (!expr) return null;
+
+    switch (expr.as_base_expression.type) {
+        case BINDING:
+            if (expr.as_binding_expression.indentifier == name) {
+                return expr.as_binding_expression.expression;
+            }
+            return find_binding_value(expr.as_binding_expression.expression, name);
+
+        case ATTRSET:
+            foreach (BindingExpression* binding : expr.as_attrset_expression.bindings) {
+                if (binding.indentifier == name) {
+                    return binding.expression;
+                }
+                Expression* found = find_binding_value((Expression*)binding, name);
+                if (found) return found;
+            }
+
+        case LET:
+            foreach (BindingExpression* binding : expr.as_let_expression.bindings) {
+                if (binding.indentifier == name) {
+                    return binding.expression;
+                }
+                Expression* found = find_binding_value((Expression*)binding, name);
+                if (found) return found;
+            }
+            return find_binding_value(expr.as_let_expression.body, name);
+
+        case FUNCTION:
+            return find_binding_value(expr.as_function_expression.body, name);
+
+        case APPLY:
+            {
+                Expression* found = find_binding_value(expr.as_apply_expression.argument, name);
+                if (found) return found;
+            }
+            return find_binding_value(expr.as_apply_expression.function, name);
+
+        case WITH:
+            {
+                Expression* found = find_binding_value(expr.as_with_expression.body, name);
+                if (found) return found;
+            }
+            return find_binding_value(expr.as_with_expression.expression, name);
+
+        case PAREN:
+            return find_binding_value(expr.as_paren_expression.expression, name);
+
+        case BINARY:
+            {
+                Expression* found = find_binding_value(expr.as_binary_expression.left, name);
+                if (found) return found;
+            }
+            return find_binding_value(expr.as_binary_expression.right, name);
+
+        default:
+            return null;
+    }
+    return null;
+}
+
+// [collect transitive let-bindings]
+
+fn void collect_transitive_bindings_rec(Expression* ast, String name, List{String}* seen, List{String}* out) {
+    foreach (String s : *seen) {
+        if (s == name) return;
+    }
+    seen.push(name);
+
+    Expression* binding_expr = find_binding_value(ast, name);
+    if (!binding_expr) return;
+
+    List{String} refs;
+    refs.init(tmem);
+    collect_variable_refs(binding_expr, &refs);
+
+    foreach (String ref : refs) {
+        if (ref == "pkgs") continue;
+        if (ref == name) continue;
+        bool already_seen = false;
+        foreach (String s : *seen) {
+            if (s == ref) { already_seen = true; break; }
+        }
+        if (!already_seen) {
+            collect_transitive_bindings_rec(ast, ref, seen, out);
+        }
+    }
+
+    String serialized = string::format(tmem, "%s = %s;", name, serialize_code(binding_expr));
+    out.push(serialized);
+}
+
+fn void collect_transitive_bindings(Expression* ast, String deps_name, List{String}* out) {
+    List{String} seen;
+    seen.init(tmem);
+
+    Expression* deps_expr = find_binding_value(ast, deps_name);
+    if (!deps_expr) return;
+
+    List{String} refs;
+    refs.init(tmem);
+    collect_variable_refs(deps_expr, &refs);
+
+    foreach (String ref : refs) {
+        if (ref == "pkgs") continue;
+        bool already_seen = false;
+        foreach (String s : seen) {
+            if (s == ref) { already_seen = true; break; }
+        }
+        if (!already_seen) {
+            collect_transitive_bindings_rec(ast, ref, &seen, out);
+        }
+    }
+}
+
+// [extract mkShell env block]
+
+fn String extract_mkshell_env_raw(TsNode root, String* source) {
+    int child_count = ts::node_named_child_count(root);
+    if (child_count == 0) return "";
+
+    TsNode flake_attrset = ts::node_named_child(root, 0);
+    ZString node_type = ts::node_type(flake_attrset);
+    if (node_type != "attrset_expression" && node_type != "rec_attrset_expression") return "";
+
+    int binding_count = ts::node_named_child_count(flake_attrset);
+    if (binding_count == 0) return "";
+
+    TsNode binding_set = ts::node_named_child(flake_attrset, 0);
+    ZString bs_type = ts::node_type(binding_set);
+    if (bs_type != "binding_set") return "";
+
+    TsNode outputs_binding = ts::node_null();
+    int bs_child_count = ts::node_named_child_count(binding_set);
+    for (int i = 0; i < bs_child_count; i++) {
+        TsNode child = ts::node_named_child(binding_set, i);
+        ZString ct = ts::node_type(child);
+        if (ct == "binding") {
+            TsNode attrpath = ts::node_child_by_field_name(child, "attrpath");
+            String attr_text = ts::node_get_text(attrpath, source);
+            if (attr_text == "outputs") {
+                outputs_binding = child;
+                break;
+            }
+        }
+    }
+    if (ts::node_is_null(outputs_binding)) return "";
+
+    TsNode outputs_expr = ts::node_child_by_field_name(outputs_binding, "expression");
+    if (ts::node_is_null(outputs_expr)) return "";
+
+    TsNode inner_attrset = find_inner_attrset_node(outputs_expr);
+    if (ts::node_is_null(inner_attrset)) return "";
+
+    TsNode inner_binding_set = ts::node_named_child(inner_attrset, 0);
+    if (ts::node_is_null(inner_binding_set)) return "";
+
+    TsNode devshell_binding = ts::node_null();
+    int inner_bs_count = ts::node_named_child_count(inner_binding_set);
+    for (int i = 0; i < inner_bs_count; i++) {
+        TsNode child = ts::node_named_child(inner_binding_set, i);
+        ZString ct = ts::node_type(child);
+        if (ct == "binding") {
+            TsNode attrpath = ts::node_child_by_field_name(child, "attrpath");
+            String attr_text = ts::node_get_text(attrpath, source);
+            if (attr_text == "packages.dev-shell") {
+                devshell_binding = child;
+                break;
+            }
+        }
+    }
+    if (ts::node_is_null(devshell_binding)) return "";
+
+    TsNode devshell_expr = ts::node_child_by_field_name(devshell_binding, "expression");
+    if (ts::node_is_null(devshell_expr)) return "";
+
+    ZString ds_type = ts::node_type(devshell_expr);
+    if (ds_type != "apply_expression") return "";
+
+    TsNode arg = ts::node_child_by_field_name(devshell_expr, "argument");
+    if (ts::node_is_null(arg)) return "";
+
+    ZString arg_type = ts::node_type(arg);
+    if (arg_type != "attrset_expression" && arg_type != "rec_attrset_expression") return "";
+
+    TsNode arg_binding_set = ts::node_named_child(arg, 0);
+    if (ts::node_is_null(arg_binding_set)) return "";
+
+    int arg_bs_count = ts::node_named_child_count(arg_binding_set);
+    for (int i = 0; i < arg_bs_count; i++) {
+        TsNode child = ts::node_named_child(arg_binding_set, i);
+        ZString ct = ts::node_type(child);
+        if (ct == "binding") {
+            TsNode attrpath = ts::node_child_by_field_name(child, "attrpath");
+            String attr_text = ts::node_get_text(attrpath, source);
+            if (attr_text == "env") {
+                return ts::node_get_text(child, source);
+            }
+        }
+    }
+
+    return "";
+}
+
+fn TsNode find_inner_attrset_node(TsNode node) {
+    ZString nt = ts::node_type(node);
+    if (nt == "attrset_expression" || nt == "rec_attrset_expression" || nt == "let_attrset_expression") {
+        return node;
+    }
+    if (nt == "function_expression") {
+        TsNode body = ts::node_child_by_field_name(node, "body");
+        if (!ts::node_is_null(body)) return find_inner_attrset_node(body);
+    }
+    if (nt == "apply_expression") {
+        TsNode arg = ts::node_child_by_field_name(node, "argument");
+        if (!ts::node_is_null(arg)) return find_inner_attrset_node(arg);
+    }
+    if (nt == "let_expression") {
+        TsNode body = ts::node_child_by_field_name(node, "body");
+        if (!ts::node_is_null(body)) return find_inner_attrset_node(body);
+    }
+    if (nt == "parenthesized_expression") {
+        TsNode inner = ts::node_child_by_field_name(node, "expression");
+        if (!ts::node_is_null(inner)) return find_inner_attrset_node(inner);
+    }
+    return ts::node_null();
 }
 
 // [remove outputs except dev-shell]
@@ -1143,6 +1579,12 @@ fn void collect_variable_refs(Expression* expr, List{String}* refs) {
       collect_variable_refs(expr.as_binary_expression.right, refs);
     case PAREN:
       collect_variable_refs(expr.as_paren_expression.expression, refs);
+    case IF:
+      collect_variable_refs(expr.as_if_expression.condition, refs);
+      collect_variable_refs(expr.as_if_expression.consequence, refs);
+      collect_variable_refs(expr.as_if_expression.alternative, refs);
+    case UNARY:
+      collect_variable_refs(expr.as_unary_expression.operand, refs);
     default:
       // Other types don't contain variable references
   }

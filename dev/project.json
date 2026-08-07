@@ -1,19 +1,22 @@
-// See resources/examples/project_all_settings.json and 'c3c --list-project-properties' to see more properties.
 {
   "langrev": "1",
   "warnings": [ "no-unused" ],
-  "dependency-search-paths": [ ],
-  "dependencies": [ ],
+  "dependencies": [],
   "version": "0.1.0",
-  "sources": [ "dev-shell.c3" ], // [ "src/**" ],
+  "sources": [
+    "dev-shell.c3",
+    "src/nix_parser/src/**"
+  ],
   "build-dir": "build",
   "output": "build",
   "targets": {
     "dev-shell": {
-      "type": "executable"
-    },
-    "test": {
-      "type": "executable"
+      "type": "executable",
+      "link-args": [
+        "src/nix_parser/lib/tree-sitter/libtree-sitter.a",
+        "src/nix_parser/lib/tree-sitter-nix/src/parser.o",
+        "src/nix_parser/lib/tree-sitter-nix/src/scanner.o"
+      ]
     }
   },
   "cpu": "generic",
