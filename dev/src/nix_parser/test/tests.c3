@@ -184,7 +184,7 @@ fn void test_nix_code_serialization_2() @test {
     flake-utils.url = "github:numtide/flake-utils";
     tts.url = "path:./tts";
   };
-  outputs = {self, nixpkgs, flake-utils, tts}: flake-utils.lib.eachDefaultSystem ({system}: let
+  outputs = {self, nixpkgs, flake-utils, tts}: flake-utils.lib.eachDefaultSystem (system: let
     pkgs = nixpkgs.legacyPackages.${system};
     kyoki_tts = tts.packages.${system}.default;
     deps = with pkgs; [
@@ -247,7 +247,7 @@ fn void test_nix_code_output_removal_1() @test {
     flake-utils.url = "github:numtide/flake-utils";
     tts.url = "path:./tts";
   };
-  outputs = {self, nixpkgs, flake-utils, tts}: flake-utils.lib.eachDefaultSystem ({system}: let
+  outputs = {self, nixpkgs, flake-utils, tts}: flake-utils.lib.eachDefaultSystem (system: let
     pkgs = nixpkgs.legacyPackages.${system};
     kyoki_tts = tts.packages.${system}.default;
     deps = with pkgs; [
@@ -338,7 +338,7 @@ fn void test_nix_remove_unused_flake_inputs() @test {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
-  outputs = {self, nixpkgs, flake-utils}: flake-utils.lib.eachDefaultSystem ({system}: let
+  outputs = {self, nixpkgs, flake-utils}: flake-utils.lib.eachDefaultSystem (system: let
     pkgs = nixpkgs.legacyPackages.${system};
     deps = with pkgs; [
       gcc
@@ -349,6 +349,52 @@ fn void test_nix_remove_unused_flake_inputs() @test {
     packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };
   });
 }`);
+  };
+}
+
+fn void test_nix_preserves_pinned_nixpkgs() @test {
+  @pool() {
+    String source = `
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    flake-utils.url = "github:numtide/flake-utils";
+    dev-shell.url = "github:peinz/dev-shell";
+  };
+
+  outputs = { self, nixpkgs, flake-utils, dev-shell }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        deps = with pkgs; [
+          nodejs_20
+          pnpm
+        ];
+      in
+      {
+        packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };
+        devShells.default = pkgs.mkShell { buildInputs = deps; };
+      }
+    );
+}
+    `;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    nix_parser::remove_unused_flake_inputs(expr);
+    Expression* let_expr = nix_parser::find_let_in_outputs(expr);
+    if (let_expr != null) {
+      nix_parser::remove_unused_let_definitions(let_expr);
+    }
+    String result = nix_parser::serialize_code(expr);
+
+    // The pinned nixpkgs URL must be preserved, not replaced with nixos-unstable
+    test::@check(test_utils::string_contains(result, "nixos-24.05"));
+    test::@check(!test_utils::string_contains(result, "nixos-unstable"));
+    // devShells.default should be stripped, packages.dev-shell kept
+    test::@check(test_utils::string_contains(result, "packages.dev-shell"));
+    test::@check(!test_utils::string_contains(result, "devShells.default"));
   };
 }
 

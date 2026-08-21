@@ -67,3 +67,16 @@ fn String flatten_for_comment(String s) {
   }
   return result.str_view();
 }
+
+fn bool string_contains(String haystack, String needle) {
+  if (needle.len == 0) return true;
+  if (haystack.len < needle.len) return false;
+  for (usz i = 0; i + needle.len <= haystack.len; i++) {
+    bool match = true;
+    for (usz j = 0; j < needle.len; j++) {
+      if (haystack[i + j] != needle[j]) { match = false; break; }
+    }
+    if (match) return true;
+  }
+  return false;
+}

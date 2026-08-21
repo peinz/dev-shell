@@ -15,10 +15,7 @@ extern fn void* malloc(usz size);
 extern fn CInt stat(ZString path, libc::Stat* buf);
 
 struct DevShellConfig {
-    String pkgs_def;
-    String deps;
-    String extra_bindings;
-    String env_block;
+    String flake_content;
 }
 
 fn usz get_file_mtime(Path path) {
@@ -134,33 +131,15 @@ fn void extract_devshell_config(Path project_root, DevShellConfig* out_config, b
     }
     Expression* ast = ast_opt;
 
-    Expression* pkgs_expr = nix_parser::find_binding_value(ast, "pkgs");
-    if (pkgs_expr == null) {
-        io::printn("Error: Could not find pkgs binding in flake.nix");
-        return;
+    // Rewrite the AST in-place: keep only inputs referenced by outputs,
+    // prune outputs to just packages.dev-shell, and drop unused let-bindings.
+    nix_parser::remove_unused_flake_inputs(ast);
+    Expression* let_expr = nix_parser::find_let_in_outputs(ast);
+    if (let_expr != null) {
+        nix_parser::remove_unused_let_definitions(let_expr);
     }
 
-    Expression* deps_expr = nix_parser::find_binding_value(ast, "deps");
-    if (deps_expr == null) {
-        io::printn("Error: Could not find deps binding in flake.nix");
-        return;
-    }
-
-    out_config.pkgs_def = nix_parser::serialize_code(pkgs_expr);
-    out_config.deps = nix_parser::serialize_code(deps_expr);
-
-    List{String} extra;
-    extra.init(tmem);
-    nix_parser::collect_transitive_bindings(ast, "deps", &extra);
-    DString extra_str = dstring::temp();
-    foreach (i, String binding : extra) {
-        if (i > 0) extra_str.append("\n");
-        extra_str.append("        ");
-        extra_str.append(binding);
-    }
-    out_config.extra_bindings = extra_str.str_view();
-
-    out_config.env_block = nix_parser::extract_mkshell_env_raw(root, &content);
+    out_config.flake_content = nix_parser::serialize_code(ast);
 
     *found = true;
 }
@@ -172,46 +151,10 @@ fn void generate_devshell_flake(Path project_root, DevShellConfig config) {
     Path flake_path = dev_shell_dir.tappend("/flake.nix")!!;
 
     io::printn("Generating .dev-shell/flake.nix...");
-    io::printfn("  Extracted pkgs: %s", config.pkgs_def);
-    io::printfn("  Extracted deps: %s", config.deps);
-
-    DString flake_content = dstring::temp();
-    flake_content.append("{\n");
-    flake_content.append("  inputs = {\n");
-    flake_content.append("    nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";\n");
-    flake_content.append("    flake-utils.url = \"github:numtide/flake-utils\";\n");
-    flake_content.append("    dev-shell.url = \"github:peinz/dev-shell\";\n");
-    flake_content.append("  };\n");
-    flake_content.append("\n  outputs = { self, nixpkgs, flake-utils, dev-shell }:\n");
-    flake_content.append("    flake-utils.lib.eachDefaultSystem (system:\n");
-    flake_content.append("      let\n");
-    flake_content.append("        pkgs = ");
-    flake_content.append(config.pkgs_def);
-    flake_content.append(";\n");
-    if (config.extra_bindings.len > 0) {
-        flake_content.append(config.extra_bindings);
-        flake_content.append("\n");
-    }
-    flake_content.append("        deps = ");
-    flake_content.append(config.deps);
-    flake_content.append(";\n");
-    flake_content.append("      in\n");
-    flake_content.append("      {\n");
-    flake_content.append("        packages.dev-shell = dev-shell.mkShell {\n");
-    flake_content.append("          inherit pkgs deps;\n");
-    if (config.env_block.len > 0) {
-        flake_content.append("          ");
-        flake_content.append(config.env_block);
-        flake_content.append("\n");
-    }
-    flake_content.append("        };\n");
-    flake_content.append("        devShells.default = dev-shell.mkShell { inherit pkgs; inherit deps; };\n");
-    flake_content.append("      }\n");
-    flake_content.append("    );\n");
-    flake_content.append("}");
 
     File f = file::open(flake_path.str_view(), "w")!!;
-    (void)f.write(flake_content.str_view())!!;
+    (void)f.write(config.flake_content)!!;
+    (void)f.write("\n")!!;
     (void)f.flush()!!;
     (void)f.close()!!;
 
@@ -228,7 +171,7 @@ fn void main() {
     find_flake_nix(&project_root, &found_flake);
 
     if (found_flake) {
-        DevShellConfig config = { "", "", "", "" };
+        DevShellConfig config = { "" };
         bool config_found = false;
         extract_devshell_config(project_root, &config, &config_found);
 
@@ -253,6 +196,11 @@ fn void main() {
 
             if (needs_regeneration) {
                 generate_devshell_flake(project_root, config);
+                // Delete stale lock so nix regenerates it against the new inputs
+                Path lock_path = ds_dir.tappend("/flake.lock")!!;
+                if (path::exists(lock_path)) {
+                    (void)file::delete(lock_path.str_view());
+                }
                 (void)path::chdir(ds_dir)!!;
                 system("nix build path:.#dev-shell");
             } else {

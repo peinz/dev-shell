@@ -183,6 +183,7 @@ struct FormalExpression {
 struct FormalsExpression {
   ExpressionType type;
   List{FormalExpression*} formals;
+  bool is_universal;  // true for bare-identifier params (e.g. `system:`) vs `{ system }:`
 }
 
 struct FloatExpression {
@@ -628,7 +629,7 @@ fn FunctionExpression* tr_function_expression(TsNode node, String* source) {
     TsNode universal_node = ts::node_child_by_field_name(node, "universal");
     if (!ts::node_is_null(universal_node)) {
       // Create a single formal from the universal identifier
-      FormalsExpression* formals = mem::tnew(FormalsExpression, { .type = FORMALS });
+      FormalsExpression* formals = mem::tnew(FormalsExpression, { .type = FORMALS, .is_universal = true });
       FormalExpression* formal = mem::tnew(FormalExpression, { 
         .type = FORMAL,
         .name = ts::node_get_text(universal_node, source)
@@ -1173,14 +1174,20 @@ fn void _serialize_code(Expression* expr, DString* out, int depth = 0) {
       }
       out.append_string(";");
     case FORMALS:
-      out.append_char('{');
-      bool first = true;
-      foreach (FormalExpression* formal : expr.as_formals_expression.formals) {
-        if (!first) out.append_string(", ");
-        first = false;
-        _serialize_code((Expression*)formal, out, depth);
+      if (expr.as_formals_expression.is_universal) {
+        foreach (FormalExpression* formal : expr.as_formals_expression.formals) {
+          _serialize_code((Expression*)formal, out, depth);
+        }
+      } else {
+        out.append_char('{');
+        bool first = true;
+        foreach (FormalExpression* formal : expr.as_formals_expression.formals) {
+          if (!first) out.append_string(", ");
+          first = false;
+          _serialize_code((Expression*)formal, out, depth);
+        }
+        out.append_char('}');
       }
-      out.append_char('}');
     case FORMAL:
       out.append_string(expr.as_formal_expression.name);
       if (expr.as_formal_expression.default_value) {
@@ -1675,6 +1682,34 @@ fn BindingExpression* find_input_binding(AttrsetExpression* inputs, String name)
     }
   }
   return null;
+}
+
+// Navigate from the flake root attrset to the let-expression inside outputs.
+// Path: root ATTRSET -> outputs binding -> FUNCTION body -> APPLY argument -> FUNCTION body -> LET
+fn Expression* find_let_in_outputs(Expression* expr) {
+    if (!expr) return null;
+    if (expr.as_base_expression.type != ATTRSET) return null;
+
+    BindingExpression* outputs_binding = find_binding(&expr.as_attrset_expression, "outputs");
+    if (!outputs_binding) return null;
+
+    Expression* outputs_expr = outputs_binding.expression;
+    if (outputs_expr.as_base_expression.type != FUNCTION) return null;
+    Expression* body = outputs_expr.as_function_expression.body;
+
+    // eachDefaultSystem (system: let ... in ...)
+    if (body.as_base_expression.type != APPLY) return null;
+    Expression* arg = body.as_apply_expression.argument;
+
+    if (arg.as_base_expression.type != FUNCTION) return null;
+    Expression* inner_body = arg.as_function_expression.body;
+
+    if (inner_body.as_base_expression.type == LET) return inner_body;
+    if (inner_body.as_base_expression.type == PAREN) {
+        Expression* inner = inner_body.as_paren_expression.expression;
+        if (inner.as_base_expression.type == LET) return inner;
+    }
+    return null;
 }
 
 // Remove a formal from the formals list by name
