@@ -719,3 +719,139 @@ fn void test_extract_mkshell_env_no_mkshell() @test {
     test::@check(env_block.len == 0);
   };
 }
+
+fn void test_string_interpolation_simple() @test {
+  @pool() {
+    String source = `{ program = "${self.packages.sf-acp}/bin/sf-acp"; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::eq(nix_code_str, `{ program = "${self.packages.sf-acp}/bin/sf-acp"; }`);
+  };
+}
+
+fn void test_string_interpolation_nested_select() @test {
+  @pool() {
+    String source = `{ program = "${self.packages.${system}.sf-acp}/bin/sf-acp"; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::eq(nix_code_str, `{ program = "${self.packages.${system}.sf-acp}/bin/sf-acp"; }`);
+  };
+}
+
+fn void test_string_interpolation_multiple() @test {
+  @pool() {
+    String source = `{ x = "${foo}/bin/${bar}/lib"; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::eq(nix_code_str, `{ x = "${foo}/bin/${bar}/lib"; }`);
+  };
+}
+
+fn void test_indented_string_interpolation() @test {
+  @pool() {
+    String source = `{ hook = ''
+      export PATH="${pkgs.hello}/bin:$PATH"
+      echo "${greeting}"
+    ''; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::@check(test_utils::string_contains(nix_code_str, "${pkgs.hello}"));
+    test::@check(test_utils::string_contains(nix_code_str, "${greeting}"));
+    test::@check(!test_utils::string_contains(nix_code_str, "${...}"));
+  };
+}
+
+fn void test_flake_apps_interpolation_roundtrip() @test {
+  @pool() {
+    String source = `
+{
+  description = "sf-acp";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    flake-utils.url = "github:numtide/flake-utils";
+    dev-shell.url = "github:peinz/dev-shell";
+  };
+  outputs = { self, nixpkgs, flake-utils, dev-shell }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        deps = with pkgs; [ cargo rustc ];
+      in
+      {
+        packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };
+        packages.sf-acp = pkgs.hello;
+        apps.sf-acp = {
+          type = "app";
+          program = "${self.packages.${system}.sf-acp}/bin/sf-acp";
+        };
+      }
+    );
+}
+    `;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    // The interpolation must be preserved exactly, not replaced with ${...}
+    test::@check(test_utils::string_contains(nix_code_str, "${self.packages.${system}.sf-acp}"));
+    test::@check(!test_utils::string_contains(nix_code_str, "${...}"));
+  };
+}
+
+fn void test_apps_filtered_out() @test {
+  @pool() {
+    String source = `
+{
+  description = "sf-acp";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    flake-utils.url = "github:numtide/flake-utils";
+    dev-shell.url = "github:peinz/dev-shell";
+  };
+  outputs = { self, nixpkgs, flake-utils, dev-shell }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = import nixpkgs { inherit system; };
+        deps = with pkgs; [ cargo rustc ];
+      in
+      {
+        packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };
+        packages.sf-acp = pkgs.hello;
+        devShells.default = pkgs.mkShell { buildInputs = deps; };
+        apps.sf-acp = {
+          type = "app";
+          program = "${self.packages.${system}.sf-acp}/bin/sf-acp";
+        };
+      }
+    );
+}
+    `;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    nix_parser::remove_unused_flake_inputs(expr);
+    String nix_code_str = nix_parser::serialize_code(expr);
+    // packages.dev-shell must survive
+    test::@check(test_utils::string_contains(nix_code_str, "packages.dev-shell"));
+    // apps.sf-acp must be filtered out
+    test::@check(!test_utils::string_contains(nix_code_str, "apps.sf-acp"));
+    // devShells.default must be filtered out
+    test::@check(!test_utils::string_contains(nix_code_str, "devShells.default"));
+    // packages.sf-acp must be filtered out
+    test::@check(!test_utils::string_contains(nix_code_str, "packages.sf-acp"));
+  };
+}

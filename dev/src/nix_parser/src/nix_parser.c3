@@ -520,8 +520,16 @@ fn StringExpression* tr_string_expression(TsNode node, String* source) {
     if (child_type == "string_fragment") {
       value_str.append_string(ts::node_get_text(child, source));
     } else if (child_type == "interpolation") {
-      // For interpolation ${...}, we'll include a placeholder
-      value_str.append_string("${...}");
+      // Preserve interpolation content: extract the inner expression text
+      TsNode interp_expr = ts::node_child_by_field_name(child, "expression");
+      if (!ts::node_is_null(interp_expr)) {
+        String expr_text = ts::node_get_text(interp_expr, source);
+        value_str.append_string("${");
+        value_str.append_string(expr_text);
+        value_str.append_char('}');
+      } else {
+        value_str.append_string("${...}");
+      }
     }
   }
   expr.value = value_str.str_view();
@@ -540,8 +548,16 @@ fn StringExpression* tr_indented_string_expression(TsNode node, String* source) 
     if (child_type == "string_fragment") {
       value_str.append_string(ts::node_get_text(child, source));
     } else if (child_type == "interpolation") {
-      // For interpolation ${...}, we'll include a placeholder
-      value_str.append_string("${...}");
+      // Preserve interpolation content: extract the inner expression text
+      TsNode interp_expr = ts::node_child_by_field_name(child, "expression");
+      if (!ts::node_is_null(interp_expr)) {
+        String expr_text = ts::node_get_text(interp_expr, source);
+        value_str.append_string("${");
+        value_str.append_string(expr_text);
+        value_str.append_char('}');
+      } else {
+        value_str.append_string("${...}");
+      }
     }
   }
   expr.value = value_str.str_view();
@@ -1496,22 +1512,8 @@ fn void filter_attrset_bindings(AttrsetExpression* attrset) {
   new_bindings.init(tmem);
 
   foreach (BindingExpression* binding : attrset.bindings) {
-    String ident = binding.indentifier;
-    
-    // Always keep packages.dev-shell
-    if (ident == "packages.dev-shell") {
-      new_bindings.push(binding);
-    }
-    // Skip other packages.* bindings (packages.tts, etc.)
-    else if (ident.len >= 9 && ident[:9] == "packages.") {
-      // skip
-    }
-    // Skip all devShells.* bindings (devShells.default, etc.)
-    else if (ident.len >= 10 && ident[:10] == "devShells.") {
-      // skip
-    }
-    // Keep everything else
-    else {
+    // Keep only packages.dev-shell, drop everything else
+    if (binding.indentifier == "packages.dev-shell") {
       new_bindings.push(binding);
     }
   }
