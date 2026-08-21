@@ -166,6 +166,7 @@ fn void generate_devshell_flake(Path project_root, DevShellConfig config) {
 }
 
 fn void main() {
+    Path original_cwd = path::tcwd()!!;
     Path project_root;
     bool found_flake = false;
     find_flake_nix(&project_root, &found_flake);
@@ -229,6 +230,7 @@ fn void main() {
               null,
             };
 
+            (void)path::chdir(original_cwd)!!;
             execvp(exec_path_z, args);
 
             io::printn("Error: Failed to execute dev-shell");
