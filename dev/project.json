@@ -7,6 +7,9 @@
     "dev-shell.c3",
     "src/nix_parser/src/**"
   ],
+  "test-sources": [
+    "src/nix_parser/test/**"
+  ],
   "build-dir": "build",
   "output": "build",
   "targets": {

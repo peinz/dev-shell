@@ -1185,7 +1185,10 @@ fn void _serialize_code(Expression* expr, DString* out, int depth = 0) {
       _serialize_code(expr.as_with_expression.body, out, depth);
     case INHERIT:
       out.append_string("inherit ");
+      bool first_inherit = true;
       foreach (String name : expr.as_inherit_expression.names) {
+        if (!first_inherit) out.append_char(' ');
+        first_inherit = false;
         out.append_string(name);
       }
       out.append_string(";");
@@ -1702,6 +1705,11 @@ fn Expression* find_let_in_outputs(Expression* expr) {
     // eachDefaultSystem (system: let ... in ...)
     if (body.as_base_expression.type != APPLY) return null;
     Expression* arg = body.as_apply_expression.argument;
+
+    // The argument may be wrapped in parentheses: eachDefaultSystem (system: let ... in ...)
+    if (arg.as_base_expression.type == PAREN) {
+        arg = arg.as_paren_expression.expression;
+    }
 
     if (arg.as_base_expression.type != FUNCTION) return null;
     Expression* inner_body = arg.as_function_expression.body;

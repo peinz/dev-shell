@@ -11,6 +11,121 @@ import nix_parser;
 import ts;
 import test_utils;
 
+
+fn void test_nix_inherit_multiple_names_roundtrip() @test {
+  @pool() {
+    // `inherit pkgs deps;` (one inherit, two names) must round-trip with names
+    // separated by a space, not concatenated into `inherit pkgsdeps;`.
+    String source = `{ inherit pkgs deps; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::eq(nix_code_str, `{ inherit pkgs deps; }`);
+  };
+}
+
+fn void test_nix_inherit_single_name_roundtrip() @test {
+  @pool() {
+    String source = `{ inherit pkgs; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::eq(nix_code_str, `{ inherit pkgs; }`);
+  };
+}
+
+fn void test_nix_inherit_three_names_roundtrip() @test {
+  @pool() {
+    String source = `{ inherit pkgs deps foo; }`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::eq(nix_code_str, `{ inherit pkgs deps foo; }`);
+  };
+}
+
+fn void test_nix_inherit_multiple_in_mkshell() @test {
+  @pool() {
+    // Full flake using `inherit pkgs deps;` (combined) inside mkShell must
+    // serialize back to `inherit pkgs deps;`, not `inherit pkgsdeps;`.
+    String source = `
+{
+  outputs = { self, nixpkgs, flake-utils, dev-shell }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        deps = with pkgs; [ gcc ];
+      in {
+        packages.dev-shell = dev-shell.mkShell { inherit pkgs deps; };
+      }
+    );
+}
+    `;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+    String nix_code_str = nix_parser::serialize_code(expr);
+    test::@check(test_utils::string_contains(nix_code_str, "inherit pkgs deps;"));
+    test::@check(!test_utils::string_contains(nix_code_str, "inherit pkgsdeps;"));
+  };
+}
+
+// Regression: find_let_in_outputs must handle parenthesized function arguments.
+// `eachDefaultSystem (system: let ... in ...)` wraps the function in PAREN.
+// Without unwrapping PAREN, find_let_in_outputs returned null and the let
+// bindings were never pruned.
+fn void test_find_let_in_outputs_with_paren() @test {
+  @pool() {
+    String source = `
+{
+  outputs = { self, nixpkgs, flake-utils, dev-shell }:
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+        unused = "drop me";
+        deps = with pkgs; [ gcc ];
+      in {
+        packages.dev-shell = dev-shell.mkShell { inherit pkgs deps; };
+      }
+    );
+}
+    `;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* expr = nix_parser::tr_source(root, &source)!!;
+
+    // find_let_in_outputs must return non-null despite PAREN wrapper
+    Expression* let_expr = nix_parser::find_let_in_outputs(expr);
+    test::@check(let_expr != null);
+
+    // The let body must have bindings (packages.dev-shell)
+    if (let_expr != null) {
+      Expression* let_body = let_expr.as_let_expression.body;
+      int body_bindings = (int)let_body.as_attrset_expression.bindings.size;
+      test::@check(body_bindings == 1);
+    }
+
+    // After removing unused let definitions, `unused` must be gone
+    if (let_expr != null) {
+      nix_parser::remove_unused_let_definitions(let_expr);
+    }
+    String result = nix_parser::serialize_code(expr);
+    test::@check(!test_utils::string_contains(result, "unused"));
+    test::@check(test_utils::string_contains(result, "packages.dev-shell"));
+    test::@check(test_utils::string_contains(result, "deps"));
+  };
+}
+
+// Regression: inherit with multiple names must serialize with space separators.
+// Previously `inherit pkgs deps;` serialized as `inherit pkgsdeps;`.
 fn void test_nix_tree_serialization_1() @test {
   @pool() {
     String source = `{ foo = 1 + 2; }`;
