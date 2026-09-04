@@ -1548,13 +1548,16 @@ fn void remove_outputs_except_devshell(Expression* expr) {
 
 // [remove unused let definitions]
 
-// Collect all variable names referenced in an expression (recursively)
+// Collect all variable names referenced in an expression (recursively).
+// Duplicates are skipped so a fixpoint loop over refs terminates.
 fn void collect_variable_refs(Expression* expr, List{String}* refs) {
   if (!expr) return;
 
   switch (expr.as_base_expression.type) {
     case VARIABLE:
-      refs.push(expr.as_variable_expression.name);
+      if (!string_in_list(refs, expr.as_variable_expression.name)) {
+        refs.push(expr.as_variable_expression.name);
+      }
     case SELECT:
       collect_variable_refs(expr.as_select_expression.expression, refs);
     case APPLY:
@@ -1577,7 +1580,9 @@ fn void collect_variable_refs(Expression* expr, List{String}* refs) {
     case INHERIT:
       // Inherit expressions contain variable references
       foreach (String name : expr.as_inherit_expression.names) {
-        refs.push(name);
+        if (!string_in_list(refs, name)) {
+          refs.push(name);
+        }
       }
     case LIST:
       foreach (Expression* elem : expr.as_list_expression.elements) {
@@ -1619,41 +1624,35 @@ fn void remove_unused_let_definitions(Expression* expr) {
 
   LetExpression* let_expr = &expr.as_let_expression;
 
-  // Keep iterating until no more bindings can be removed
+  // Seed refs from the body, then grow refs until stable: whenever a
+  // binding's name is in refs, its expression's refs are added too.
+  // This is a proper fixpoint, so binding declaration order (e.g. deps
+  // referencing tauriDev declared earlier) no longer affects the result.
+  List{String} refs;
+  refs.init(tmem);
+  collect_variable_refs(let_expr.body, &refs);
+
   bool changed = true;
   while (changed) {
     changed = false;
-
-    // Collect all variable references from the body and used bindings
-    List{String} refs;
-    refs.init(tmem);
-
-    // First, collect from the body
-    collect_variable_refs(let_expr.body, &refs);
-
-    // Then, check which bindings are referenced
-    List{BindingExpression*} new_bindings;
-    new_bindings.init(tmem);
-
     foreach (BindingExpression* binding : let_expr.bindings) {
-      String binding_name = binding.indentifier;
-
-      // Check if this binding name appears in refs
-      bool is_used = string_in_list(&refs, binding_name);
-
-      if (is_used) {
-        // Keep the binding
-        new_bindings.push(binding);
-        // Collect references from this binding's value too
+      if (string_in_list(&refs, binding.indentifier)) {
+        usz refs_before = refs.size;
         collect_variable_refs(binding.expression, &refs);
-      } else {
-        // This binding is unused - remove it
-        changed = true;
+        if (refs.size != refs_before) changed = true;
       }
     }
-
-    let_expr.bindings = new_bindings;
   }
+
+  // One final sweep: keep only bindings whose names ended up in refs
+  List{BindingExpression*} new_bindings;
+  new_bindings.init(tmem);
+  foreach (BindingExpression* binding : let_expr.bindings) {
+    if (string_in_list(&refs, binding.indentifier)) {
+      new_bindings.push(binding);
+    }
+  }
+  let_expr.bindings = new_bindings;
 }
 
 // [remove unused flake inputs]

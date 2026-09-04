@@ -398,13 +398,65 @@ fn void test_nix_remove_unused_let_definitions() @test {
     Expression* let_expr = nix_parser::tr_source(root, &source)!!;
     nix_parser::remove_unused_let_definitions(let_expr);
     String nix_code_str = nix_parser::serialize_code(let_expr);
+    // kyoki_tts is referenced by deps, so it must survive pruning (the old
+    // order-dependent algorithm dropped it and produced a broken flake).
     test::eq(nix_code_str, `let
   pkgs = nixpkgs.legacyPackages.${system};
+  kyoki_tts = tts.packages.${system}.default;
   deps = with pkgs; [
     gcc
     go
     gopls
     kyoki_tts
+  ];
+in {
+  packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };
+}`);
+  };
+}
+
+fn void test_nix_remove_unused_let_definitions_keeps_reference_chains() @test {
+  @pool() {
+    // Bindings referenced only by other bindings (not the body) must survive
+    // pruning regardless of declaration order. Regression: the old
+    // order-dependent algorithm dropped tauriLibs/tauriDev/tauriRuntime
+    // before reaching deps, producing an invalid generated flake.
+    String source = `let
+      pkgs = nixpkgs.legacyPackages.${system};
+      tauriLibs = with pkgs; [
+        gtk3
+        glib
+      ];
+      tauriDev = pkgs.buildEnv {
+        name = "tauri-dev-pkgconfig";
+        paths = builtins.map (p: p.dev) tauriLibs;
+      };
+      deps = with pkgs; [
+        pkg-config
+        tauriDev
+      ];
+    in {
+      packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };
+    };`;
+    TsTree* tree = nix_parser::parse_ts_nix_tree(source);
+    defer ts::tree_delete(tree);
+    TsNode root = ts::tree_root_node(tree);
+    Expression* let_expr = nix_parser::tr_source(root, &source)!!;
+    nix_parser::remove_unused_let_definitions(let_expr);
+    String nix_code_str = nix_parser::serialize_code(let_expr);
+    test::eq(nix_code_str, `let
+  pkgs = nixpkgs.legacyPackages.${system};
+  tauriLibs = with pkgs; [
+    gtk3
+    glib
+  ];
+  tauriDev = pkgs.buildEnv {
+    name = "tauri-dev-pkgconfig";
+    paths = builtins.map (p: p.dev) tauriLibs;
+  };
+  deps = with pkgs; [
+    pkg-config
+    tauriDev
   ];
 in {
   packages.dev-shell = dev-shell.mkShell { inherit pkgs; inherit deps; };

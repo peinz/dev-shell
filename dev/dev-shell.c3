@@ -13,6 +13,7 @@ extern fn CInt execvp(ZString file, ZString* argv);
 extern fn CInt system(ZString command);
 extern fn void* malloc(usz size);
 extern fn CInt stat(ZString path, libc::Stat* buf);
+extern fn CInt unlink(ZString path);
 
 struct DevShellConfig {
     String flake_content;
@@ -165,6 +166,22 @@ fn void generate_devshell_flake(Path project_root, DevShellConfig config) {
     (void)gf.close()!!;
 }
 
+fn void build_devshell(Path ds_dir) {
+    // Remove a stale result link so a failed build can never exec an old shell
+    Path result_link = ds_dir.tappend("/result")!!;
+    if (path::exists(result_link)) {
+        (void)unlink((ZString)result_link.str_view());
+    }
+
+    (void)path::chdir(ds_dir)!!;
+    CInt status = system("nix build path:.#dev-shell");
+
+    if (status != 0) {
+        io::printn("Error: Failed to build .dev-shell (nix build path:.#dev-shell)");
+        os::exit(1);
+    }
+}
+
 fn void main() {
     Path original_cwd = path::tcwd()!!;
     Path project_root;
@@ -202,13 +219,11 @@ fn void main() {
                 if (path::exists(lock_path)) {
                     (void)file::delete(lock_path.str_view());
                 }
-                (void)path::chdir(ds_dir)!!;
-                system("nix build path:.#dev-shell");
+                build_devshell(ds_dir);
             } else {
                 Path result_path = ds_dir.tappend("/result/bin/dev-shell")!!;
                 if (!path::exists(result_path)) {
-                    (void)path::chdir(ds_dir)!!;
-                    system("nix build path:.#dev-shell");
+                    build_devshell(ds_dir);
                 }
             }
 
